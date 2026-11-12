@@ -1,4 +1,28 @@
-"""PCM WAV inspection, decoding, and deterministic encoding."""
+"""PCM WAV inspection, decoding, and deterministic encoding.
+
+Runtime boundary (documented in README.md, "Cross-runtime WAV handoff"):
+
+All reading goes through the standard-library ``wave`` module, so accepted
+containers depend on the interpreter version, not on logic in this package:
+
+* ``WAVE_FORMAT_PCM`` (fmt tag 0x0001) is readable on every supported runtime.
+* ``WAVE_FORMAT_EXTENSIBLE`` (fmt tag 0xFFFE) is only readable on Python 3.12+
+  (CPython gh-77171 / gh-96777). On Python 3.11 the stdlib raises
+  ``wave.Error('unknown format: 65534')`` before this module's own geometry
+  checks run, which surfaces here as ``UnsupportedMedia`` / HTTP 415.
+* Even on 3.12+, the stdlib only accepts the PCM SubFormat GUID inside an
+  extensible chunk, and ``_validate_params`` below still enforces 16-bit,
+  one/two-channel geometry. A newer interpreter therefore never widens the
+  accepted media envelope.
+
+Encoding always goes through ``wave.Wave_write``, which writes a plain
+``WAVE_FORMAT_PCM`` chunk on every runtime. Rendition outputs are thus plain
+PCM WAV readable on Python 3.11 regardless of the source container. Do not add
+a conversion/rewrite path here: assets are content-addressed and provenance
+edges bind historical renditions to the original source digests, so any byte
+rewrite (even a header-only tag change) invalidates replay and must instead be
+modeled as a separately ingested asset with its own lineage.
+"""
 
 from __future__ import annotations
 
@@ -28,6 +52,10 @@ class AudioClip:
 
 
 def _open_reader(data: bytes) -> wave.Wave_read:
+    # On Python <= 3.11 wave.open rejects WAVE_FORMAT_EXTENSIBLE (0xFFFE) here
+    # with wave.Error("unknown format: 65534"); on 3.12+ the same call accepts
+    # extensible chunks whose SubFormat is PCM. See the module docstring and
+    # README "Cross-runtime WAV handoff" for the version boundary.
     try:
         reader = wave.open(io.BytesIO(data), "rb")
     except (EOFError, wave.Error) as exc:
@@ -39,6 +67,10 @@ def _open_reader(data: bytes) -> wave.Wave_read:
 
 
 def _validate_params(reader: wave.Wave_read) -> None:
+    # These are project-level rules applied after the stdlib container check
+    # has passed. They are identical on every runtime: a 3.12+ interpreter can
+    # open an extensible file, but e.g. four channels are still rejected here,
+    # so upgrading Python does not change the documented media envelope.
     if reader.getcomptype() != "NONE":
         raise UnsupportedMedia(
             "Compressed WAV payloads are not supported.",
@@ -128,6 +160,9 @@ def encode_wav(clip: AudioClip) -> bytes:
     if sys.byteorder != "little":
         values.byteswap()
     payload = io.BytesIO()
+    # wave.Wave_write always emits a plain WAVE_FORMAT_PCM fmt chunk, including
+    # on Python 3.12+ that can read WAVE_FORMAT_EXTENSIBLE. Outputs therefore
+    # stay readable on Python 3.11 even when every source was extensible.
     with wave.open(payload, "wb") as writer:
         writer.setnchannels(len(clip.channels))
         writer.setsampwidth(2)

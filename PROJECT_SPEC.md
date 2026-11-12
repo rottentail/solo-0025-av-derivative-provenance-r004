@@ -33,6 +33,30 @@ result.
 - Input media: PCM WAV and planar YUV4MPEG2 in the `C420` family
 - Output media: PCM WAV and planar YUV4MPEG2 in the `C420` family
 
+### WAV runtime boundary
+
+WAV reading is delegated to the standard-library `wave` module without a
+project-owned container parser, so the accepted `fmt ` tags depend on the
+interpreter:
+
+- `WAVE_FORMAT_PCM` (`0x0001`), signed 16-bit, one or two channels: accepted on
+  every supported runtime (Python 3.11+).
+- `WAVE_FORMAT_EXTENSIBLE` (`0xFFFE`): only readable on Python 3.12+, which
+  added this capability to `wave` (gh-77171 / gh-96777), and only when the
+  `SubFormat` GUID is PCM. On 3.11 the stdlib rejects the tag and the asset is
+  refused with `UNSUPPORTED_MEDIA`.
+- Project geometry rules (16-bit, one/two channels, 8–192 kHz, non-empty) are
+  enforced on top of the stdlib check and do not change with the runtime
+  version.
+- Writing always produces plain `WAVE_FORMAT_PCM` via `wave.Wave_write`;
+  rendition outputs are therefore readable on 3.11 even when their sources
+  were extensible.
+
+The handoff consequences (playable output vs. source-bound re-verification,
+immutable source blobs, and the unsupported header-rewrite path) are specified
+operationally in README.md under "Cross-runtime WAV handoff". This spec does
+not introduce any conversion capability.
+
 ## Core entities
 
 ### Media asset
@@ -276,6 +300,10 @@ require network access or external media programs.
 ## Intentionally omitted capabilities
 
 - Native codec coverage beyond PCM WAV and planar Y4M.
+- WAV container conversion or `WAVE_FORMAT_EXTENSIBLE` rewriting: assets are
+  immutable and content-addressed, so a rewrite would change the digest and
+  break historical provenance; cross-runtime handling is documented in the
+  README rather than implemented.
 - Persistent worker processes and cross-process task leases.
 - Authentication and multi-tenant authorization.
 - Object storage and distributed state.

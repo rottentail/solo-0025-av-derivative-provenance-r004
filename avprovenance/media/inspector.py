@@ -11,6 +11,10 @@ from .y4m import inspect_y4m
 def inspect_media(data: bytes) -> MediaDescriptor:
     if not data:
         raise UnsupportedMedia("The media payload is empty.")
+    # RIFF/WAVE dispatch only checks the container signature. Whether the
+    # WAVE_FORMAT_EXTENSIBLE fmt tag inside is accepted is decided by the
+    # runtime's wave module inside inspect_wav; see the wav.py module
+    # docstring and README "Cross-runtime WAV handoff".
     if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
         return inspect_wav(data)
     if data.startswith(b"YUV4MPEG2"):

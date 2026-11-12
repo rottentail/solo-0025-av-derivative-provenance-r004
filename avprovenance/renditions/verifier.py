@@ -49,6 +49,13 @@ def reproduce_output(
             secondary_bytes,
         )
     except (MediaOperationFailure, UnsupportedMedia, RenderFailed) as exc:
+        # UnsupportedMedia here means a parent blob cannot be opened by this
+        # interpreter's wave module. On Python <= 3.11 that includes any
+        # WAVE_FORMAT_EXTENSIBLE source (stdlib "unknown format: 65534"), so a
+        # rendition created on 3.12+ can replay to a durable mismatch with
+        # reason UNSUPPORTED_MEDIA on 3.11 without any byte drift. See README
+        # "Cross-runtime WAV handoff"; the mismatch record is retained as
+        # evidence and must not be rewritten into a pass.
         reason = getattr(exc, "code", "reproduction_failed")
         return VerificationOutcome(
             status="mismatch",
